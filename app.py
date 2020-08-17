@@ -10,6 +10,8 @@ import numpy as np
 from dash.dependencies import Input, Output, State
 import requests, base64
 import cufflinks as cf
+from datetime import date
+from datetime import timedelta
 
 import json
 
@@ -32,21 +34,57 @@ df_lat_lon = pd.read_csv(
 )
 df_lat_lon["FIPS "] = df_lat_lon["FIPS "].apply(lambda x: str(x).zfill(5))
 
-df_full_data = pd.read_csv(
+df_heart_disease = pd.read_csv(
     os.path.join(
         APP_PATH, os.path.join("data", "lat_lonH21.csv")
     )
 )
-df_full_data["County Code"] = df_full_data["County Code"].apply(
+df_heart_disease["County Code"] = df_heart_disease["County Code"].apply(
     lambda x: str(x).zfill(5)
 )
-df_full_data["County"] = (
-        df_full_data["Unnamed: 0"].map(str) + ", " + df_full_data.County.map(str)
+df_heart_disease["County"] = (
+        df_heart_disease["Unnamed: 0"].map(str) + ", " + df_heart_disease.County.map(str)
 )
 
-YEARS = [2018, 2019]
+yesterday = (date.today() - timedelta(days=1)).strftime("%m-%d-%Y")
+print(yesterday)
+jhu_filepath = f'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports/{yesterday}.csv'
 
-BINS = [
+df_covid_data = pd.read_csv(jhu_filepath)
+print(df_covid_data.head())
+
+df_covid_data["FIPS"] = df_covid_data["FIPS"].apply(
+    lambda x: str(x).zfill(5)
+)
+
+df_covid_data = df_covid_data.rename(columns={'Admin2': 'County', 'Last_Update': 'Year', 'Confirmed': 'Confirmed_cases'})
+df_heart_disease = df_heart_disease.rename(columns={'Heart Disease Value': 'Confirmed_cases'})
+
+df_covid_data["County"] = (
+        df_covid_data["County"].map(str) + ", " + df_covid_data.County.map(str)
+)
+
+def remove_last_num(num):
+  return num.strip('"')[:-15]
+
+def remove_last2_num(num):
+  return num.strip('"')[:-2]
+
+
+df_covid_data["Year"] = df_covid_data["Year"].apply(remove_last_num)
+print(df_covid_data["Year"].head())
+df_covid_data['Year'] = df_covid_data['Year'].astype(int)
+df_covid_data["County Code"] = df_covid_data["FIPS"].apply(remove_last2_num)
+df_covid_data["County Code"] = df_covid_data["County Code"].replace({'00n': '0'})
+df_covid_data["County Code"] = df_covid_data["County Code"].apply(
+    lambda x: str(x).zfill(5)
+)
+print(df_covid_data.head())
+print(df_covid_data.info())
+
+YEARS = [2018, 2020]
+
+HEART_BINS = [
     "0-94",
     "94.1-100",
     "100.1-120",
@@ -65,7 +103,27 @@ BINS = [
     ">330.1",
 ]
 
-DEFAULT_COLORSCALE = [
+COVID_BINS = [
+    "0-100",
+    "101-150",
+    "151-300",
+    "301-500",
+    "501-1000",
+    "1001-1500",
+    "1501-2000",
+    "2001-2500",
+    "2501-5000",
+    "5001-7500",
+    "7501-10000",
+    "10001-20000",
+    "20001-30000",
+    "30001-40000",
+    "40001-50000",
+    ">50001",
+]
+
+# HEART DISEASE
+DEFAULT_COLORSCALE1 = [
     "#f2fffb",
     "#bbffeb",
     "#98ffe0",
@@ -83,6 +141,45 @@ DEFAULT_COLORSCALE = [
     "#11684d",
     "#10523e",
 ]
+
+# COVID
+DEFAULT_COLORSCALE = [
+    "#ffcccc",
+    "#ffb2b2",
+    "#ff9999",
+    "#ff7f7f",
+    "#ff6666",
+    "#ff4c4c",
+    "#ff3232",
+    "#ff1919",
+    "#ff0000",
+    "#ff0000",
+    "#e50000",
+    "#cc0000",
+    "#b20000",
+    "#990000",
+    "#7f0000",
+    "#660000",
+]
+
+# DEFAULT_COLORSCALE = [
+#     "#ffcccc",
+#     "#ffb2b2",
+#     "#ff9999",
+#     "#ff7f7f",
+#     "#ff6666",
+#     "#ff4c4c",
+#     "#ff3232",
+#     "#ff1919",
+#     "#ff0000",
+#     "#ff0000",
+#     "#e50000",
+#     "#cc0000",
+#     "#b20000",
+#     "#990000",
+#     "#7f0000",
+#     "#660000",
+# ]
 
 DEFAULT_OPACITY = 0.8
 
@@ -114,20 +211,24 @@ app.layout = html.Div(
                     id="left-column",
                     children=[
                         html.Div(
-                            id="year-dropdown",
+                            id="slider-container",
                             children=[
                                 html.P(
-                                    id="year-text",
-                                    children="Select a year",
+                                    id="slider-text",
+                                    children="Drag the slider to change the year:",
                                 ),
-                                dcc.Dropdown(
-                                    id="year-select",
-                                    options=[
-                                        {"label": year, 'value': year}
+                                dcc.Slider(
+                                    id="years-slider",
+                                    min=min(YEARS),
+                                    max=max(YEARS),
+                                    value=max(YEARS),
+                                    marks={
+                                        str(year): {
+                                            "label": str(year),
+                                            "style": {"color": "#7fafdf"},
+                                        }
                                         for year in YEARS
-                                    ],
-                                    value=2018,
-                                    multi=False,
+                                    },
                                 ),
                             ],
                         ),
@@ -172,9 +273,14 @@ app.layout = html.Div(
                                     "label": "Heart Disease Value",
                                     "value": "Heart Disease Value",
                                 },
+                                {
+                                    "label": "COVID-19 Value (Live Update)",
+                                    "value": "Confirmed_cases",
+                                },
                             ],
-                            value="Heart Disease Value",
+                            value="Confirmed_cases",
                             id="chart-dropdown",
+
                         ),
                         dcc.Graph(
                             id="selected-data",
@@ -198,11 +304,13 @@ app.layout = html.Div(
 
 @app.callback(
     Output("county-choropleth", "figure"),
-    [Input("year-select", "value")],
+    [Input("years-slider", "value")],
     [State("county-choropleth", "figure")],
 )
+
 def display_map(year, figure):
-    cm = dict(zip(BINS, DEFAULT_COLORSCALE))
+    cm = dict(zip(HEART_BINS, DEFAULT_COLORSCALE1))
+    cv = dict(zip(COVID_BINS, DEFAULT_COLORSCALE))
 
     data = [
         dict(
@@ -214,35 +322,67 @@ def display_map(year, figure):
             marker=dict(size=5, color="white", opacity=0),
         )
     ]
-
-    annotations = [
-        dict(
-            showarrow=False,
-            align="right",
-            text="<b>Values per 100,000</b>",
-            font=dict(color="#2cfec1"),
-            bgcolor="#1f2630",
-            x=0.95,
-            y=0.95,
-        )
-    ]
-
-    for i, bin in enumerate(reversed(BINS)):
-        color = cm[bin]
-        annotations.append(
+    if year == 2018:
+        annotations = [
             dict(
-                arrowcolor=color,
-                text=bin,
-                x=0.95,
-                y=0.85 - (i / 20),
-                ax=-60,
-                ay=0,
-                arrowwidth=5,
-                arrowhead=0,
-                bgcolor="#1f2630",
+                showarrow=False,
+                align="right",
+                text='<b>HEART DISEASE VALUES PER 100,000</b>',
                 font=dict(color="#2cfec1"),
+                bgcolor="#1f2630",
+                x=0.95,
+                y=0.95,
             )
-        )
+        ]
+
+    if year == 2020:
+        annotations = [
+            dict(
+                showarrow=False,
+                align="right",
+                text='<b>COVID-19 VALUES</b>',
+                font=dict(color="#2cfec1"),
+                bgcolor="#1f2630",
+                x=0.95,
+                y=0.95,
+            )
+        ]
+
+    if year == 2018:
+        for i, bin in enumerate((HEART_BINS)):
+            color = cm[bin]
+            annotations.append(
+                dict(
+                    arrowcolor=color,
+                    text=bin,
+                    x=0.95,
+                    y=0.85 - (i / 20),
+                    ax=-60,
+                    ay=0,
+                    arrowwidth=5,
+                    arrowhead=0,
+                    bgcolor="#1f2630",
+                    font=dict(color="#2cfec1"),
+                )
+            )
+
+    if year == 2020:
+        for i, bin in enumerate(reversed(COVID_BINS)):
+            color = cv[bin]
+            annotations.append(
+                dict(
+                    arrowcolor=color,
+                    text=bin,
+                    x=0.95,
+                    y=0.85 - (i / 20),
+                    ax=-60,
+                    ay=0,
+                    arrowwidth=5,
+                    arrowhead=0,
+                    bgcolor="#1f2630",
+                    font=dict(color="#2cfec1"),
+                )
+            )
 
     if "layout" in figure:
         lat = figure["layout"]["mapbox"]["center"]["lat"]
@@ -267,24 +407,39 @@ def display_map(year, figure):
         dragmode="lasso",
     )
 
-    base_url = "https://raw.githubusercontent.com/pedroescobedob/mapbox-counties/master/"
-    for bin in BINS:
-        geo_layer = dict(
-            sourcetype="geojson",
-            source=base_url + str(year) + "/" + bin + ".geojson",
-            type="fill",
-            color=cm[bin],
-            opacity=DEFAULT_OPACITY,
-            # CHANGE THIS
-            fill=dict(outlinecolor="#afafaf"),
-        )
-        layout["mapbox"]["layers"].append(geo_layer)
+    if year == 2018:
+        base_url = "https://raw.githubusercontent.com/pedroescobedob/mapbox-counties/master/"
+        for bin in HEART_BINS:
+            geo_layer = dict(
+                sourcetype="geojson",
+                source=base_url + str(year) + "/" + bin + ".geojson",
+                type="fill",
+                color=cm[bin],
+                opacity=DEFAULT_OPACITY,
+                # CHANGE THIS
+                fill=dict(outlinecolor="#afafaf"),
+            )
+            layout["mapbox"]["layers"].append(geo_layer)
+
+    if year == 2020:
+        base_url = "https://raw.githubusercontent.com/pedroescobedob/mapbox-counties/master/"
+        for bin in COVID_BINS:
+            geo_layer = dict(
+                sourcetype="geojson",
+                source=base_url + str(year) + "/" + bin + ".geojson",
+                type="fill",
+                color=cv[bin],
+                opacity=DEFAULT_OPACITY,
+                # CHANGE THIS
+                fill=dict(outlinecolor="#afafaf"),
+            )
+            layout["mapbox"]["layers"].append(geo_layer)
+
 
     fig = dict(data=data, layout=layout)
     return fig
 
-
-@app.callback(Output("heatmap-title", "children"), [Input("year-select", "value")])
+@app.callback(Output("heatmap-title", "children"), [Input("years-slider", "value")])
 def update_map_title(year):
     return "Heatmap of diseases in the year {0}".format(
         year
@@ -296,13 +451,13 @@ def update_map_title(year):
     [
         Input("county-choropleth", "selectedData"),
         Input("chart-dropdown", "value"),
-        Input("year-select", "value"),
+        Input("years-slider", "value"),
     ],
 )
 def display_selected_data(selectedData, chart_dropdown, year):
     if selectedData is None:
         return dict(
-            data=[dict(x=df_full_data['County'], y=df_full_data['Heart Disease Value'])],
+            data=[dict(x=df_heart_disease['County'], y=df_heart_disease['Confirmed_cases'])],
             layout=dict(
                 title="Click-drag on the map to select counties",
                 paper_bgcolor="#1f2630",
@@ -319,45 +474,127 @@ def display_selected_data(selectedData, chart_dropdown, year):
     for i in range(len(fips)):
         if len(fips[i]) == 4:
             fips[i] = "0" + fips[i]
-    dff = df_full_data[df_full_data["County Code"].isin(fips)]
+    dff = df_heart_disease[df_heart_disease["County Code"].isin(fips)]
     dff = dff.sort_values("Year")
-    print(dff.shape)
-    print(fips[:5])
+    dff2 = df_covid_data[df_covid_data["County Code"].isin(fips)]
+    dff2 = dff2.sort_values("Year")
+    print(dff2.shape)
+    print(dff2.head())
 
     regex_pat = re.compile(r"Unreliable", flags=re.IGNORECASE)
-    dff["Heart Disease Value"] = dff["Heart Disease Value"].replace(regex_pat, 0)
+    dff["Confirmed_cases"] = dff["Confirmed_cases"].replace(regex_pat, 0)
+    dff2["Confirmed_cases"] = dff2["Confirmed_cases"].replace(regex_pat, 0)
 
-    if chart_dropdown != "death_rate_all_time":
-        title = "Absolute deaths per county"
-        AGGREGATE_BY = "Heart Disease Value"
-        if "Heart Disease Value" == chart_dropdown:
-            dff = dff[dff.Year == year]
-            title = "Heart Disease Value per 100,000".format(year)
-            AGGREGATE_BY = "Heart Disease Value"
+    # HEART DISEASE BAR CHART
+    if "Heart Disease Value" == chart_dropdown:
+        dff = dff[dff.Year == year]
+        title = "Heart Disease"
+        AGGREGATE_BY = "Confirmed_cases"
 
+        # Heart Disease aggregate values
         dff[AGGREGATE_BY] = pd.to_numeric(dff[AGGREGATE_BY], errors="coerce")
         heart_disease_values = dff.groupby("County")[AGGREGATE_BY].sum()
         heart_disease_values = heart_disease_values.sort_values()
+
         # Only look at non-zero rows:
         heart_disease_values = heart_disease_values[heart_disease_values > 0]
-        fig = heart_disease_values.iplot(
-            kind="bar", y=AGGREGATE_BY, title=title, asFigure=True
-        )
+
+        # Plot in  a barchart
+        if "Heart Disease Value" == chart_dropdown:
+            fig = heart_disease_values.iplot(
+                kind="bar", y=AGGREGATE_BY, title=title, asFigure=True
+            )
+
+            # Only show first 500 lines
+            fig["data"] = fig["data"][0:500]
+            fig_data = fig["data"]
+            fig_layout = fig["layout"]
+
+            # See plot.ly/python/reference
+            fig_data[0]["text"] = heart_disease_values.values.tolist()
+            fig_data[0]["marker"]["color"] = "#2cfec1"
+            fig_data[0]["marker"]["opacity"] = 1
+            fig_data[0]["marker"]["line"]["width"] = 0
+            fig_layout["yaxis"]["title"] = "Value per 100,000"
+            fig_layout["xaxis"]["title"] = "County"
+            fig_layout["yaxis"]["fixedrange"] = True
+            fig_layout["xaxis"]["fixedrange"] = True
+            fig_layout["hovermode"] = "closest"
+            fig_layout["title"] = "<b>{0}</b> counties selected".format(len(fips))
+            fig_layout["legend"] = dict(orientation="v")
+            fig_layout["autosize"] = True
+            fig_layout["paper_bgcolor"] = "#1f2630"
+            fig_layout["plot_bgcolor"] = "#1f2630"
+            fig_layout["font"]["color"] = "#2cfec1"
+            fig_layout["xaxis"]["tickfont"]["color"] = "#2cfec1"
+            fig_layout["yaxis"]["tickfont"]["color"] = "#2cfec1"
+            fig_layout["xaxis"]["gridcolor"] = "#5b5b5b"
+            fig_layout["yaxis"]["gridcolor"] = "#5b5b5b"
+
+            if len(fips) > 100:
+                fig["layout"][
+                    "title"
+                ] = "Heart Disease Value"
+
+            return fig
+
+        if "Heart Disease Value" == chart_dropdown:
+            fig = dff.iplot(
+                kind="area",
+                x="Year",
+                y='Confirmed_cases',
+                text="County",
+                categories="County",
+                colors=[
+                    "#FF0000",
+                    "#FF0000",
+                    "#7570b3",
+                    "#e7298a",
+                    "#66a61e",
+                    "#e6ab02",
+                    "#a6761d",
+                    "#666666",
+                    "#1b9e77",
+                ],
+                vline=[year],
+                asFigure=True,
+            )
+
+    # COVID BAR CHART
+    elif "Confirmed_cases" == chart_dropdown:
+        dff2 = dff2[dff2.Year == year]
+        title = "COVID-19"
+        AGGREGATE_BY = "Confirmed_cases"
+
+        # COVID-19 aggregate values
+        dff2[AGGREGATE_BY] = pd.to_numeric(dff2[AGGREGATE_BY], errors="coerce")
+        covid_values = dff2.groupby("County")[AGGREGATE_BY].sum()
+        covid_values = covid_values.sort_values()
+
+        # Only look at non-zero rows:
+        covid_values = covid_values[covid_values > 0]
+
+        # Plot in a barchart
+        if "Confirmed_cases" == chart_dropdown:
+            fig = covid_values.iplot(
+                kind="bar", y=AGGREGATE_BY, title=title, asFigure=True
+            )
+
 
         fig_layout = fig["layout"]
         fig_data = fig["data"]
 
-        fig_data[0]["text"] = heart_disease_values.values.tolist()
-        fig_data[0]["marker"]["color"] = "#2cfec1"
+        fig_data[0]["text"] = covid_values.values.tolist()
+        fig_data[0]["marker"]["color"] = "#ff0000"
         fig_data[0]["marker"]["opacity"] = 1
         fig_data[0]["marker"]["line"]["width"] = 0
         fig_data[0]["textposition"] = "outside"
         fig_layout["paper_bgcolor"] = "#1f2630"
         fig_layout["plot_bgcolor"] = "#1f2630"
-        fig_layout["font"]["color"] = "#2cfec1"
-        fig_layout["title"]["font"]["color"] = "#2cfec1"
-        fig_layout["xaxis"]["tickfont"]["color"] = "#2cfec1"
-        fig_layout["yaxis"]["tickfont"]["color"] = "#2cfec1"
+        fig_layout["font"]["color"] = "#ff0000"
+        fig_layout["title"]["font"]["color"] = "#ff0000"
+        fig_layout["xaxis"]["tickfont"]["color"] = "#ff0000"
+        fig_layout["yaxis"]["tickfont"]["color"] = "#ff0000"
         fig_layout["xaxis"]["gridcolor"] = "#5b5b5b"
         fig_layout["yaxis"]["gridcolor"] = "#5b5b5b"
         fig_layout["margin"]["t"] = 75
@@ -367,26 +604,27 @@ def display_selected_data(selectedData, chart_dropdown, year):
 
         return fig
 
-    fig = dff.iplot(
-        kind="area",
-        x="Year",
-        y="Heart Disease Value",
-        text="County",
-        categories="County",
-        colors=[
-            "#1b9e77",
-            "#d95f02",
-            "#7570b3",
-            "#e7298a",
-            "#66a61e",
-            "#e6ab02",
-            "#a6761d",
-            "#666666",
-            "#1b9e77",
-        ],
-        vline=[year],
-        asFigure=True,
-    )
+        if "Confirmed_cases" == chart_dropdown:
+            fig = dff2.iplot(
+                kind="area",
+                x="Year",
+                y='Confirmed_cases',
+                text="County",
+                categories="County",
+                colors=[
+                    "#FF0000",
+                    "#FF0000",
+                    "#7570b3",
+                    "#e7298a",
+                    "#66a61e",
+                    "#e6ab02",
+                    "#a6761d",
+                    "#666666",
+                    "#1b9e77",
+                ],
+                vline=[year],
+                asFigure=True,
+            )
 
     for i, trace in enumerate(fig["data"]):
         trace["mode"] = "lines+markers"
@@ -395,36 +633,7 @@ def display_selected_data(selectedData, chart_dropdown, year):
         trace["type"] = "scatter"
         for prop in trace:
             fig["data"][i][prop] = trace[prop]
-
-    # Only show first 500 lines
-    fig["data"] = fig["data"][0:500]
-
-    fig_layout = fig["layout"]
-
-    # See plot.ly/python/reference
-    fig_layout["yaxis"]["title"] = "Value per 100,000"
-    fig_layout["xaxis"]["title"] = "County"
-    fig_layout["yaxis"]["fixedrange"] = True
-    fig_layout["xaxis"]["fixedrange"] = True
-    fig_layout["hovermode"] = "closest"
-    fig_layout["title"] = "<b>{0}</b> counties selected".format(len(fips))
-    fig_layout["legend"] = dict(orientation="v")
-    fig_layout["autosize"] = True
-    fig_layout["paper_bgcolor"] = "#1f2630"
-    fig_layout["plot_bgcolor"] = "#1f2630"
-    fig_layout["font"]["color"] = "#2cfec1"
-    fig_layout["xaxis"]["tickfont"]["color"] = "#2cfec1"
-    fig_layout["yaxis"]["tickfont"]["color"] = "#2cfec1"
-    fig_layout["xaxis"]["gridcolor"] = "#5b5b5b"
-    fig_layout["yaxis"]["gridcolor"] = "#5b5b5b"
-
-    if len(fips) > 100:
-        fig["layout"][
-            "title"
-        ] = "Disease per county per year"
-
-    return fig
-
+#
 
 if __name__ == "__main__":
     app.run_server(debug=True)
